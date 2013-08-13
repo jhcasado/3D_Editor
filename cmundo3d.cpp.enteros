@@ -1,0 +1,688 @@
+#include <stdio.h>
+#include <qpainter.h>
+#include <qlayout.h>
+#include <qcolor.h>
+#include <qcolordialog.h>
+
+#include <math.h>
+
+#include "cmundo3d.h"
+#include "cinterfaz.h"
+
+#include "cobjeto3d.h"
+#include "ccamara.h"
+#include "cluz.h"
+
+#include "cvertice3d.h"
+
+CMundo3d::CMundo3d (QFont *fuente, QWidget *padre, const char *nombre)
+	: QWidget (padre, nombre)
+{
+	framebuffer = new CFrameBuffer(MIN_ANCHO_PANTALLA, MIN_ALTO_PANTALLA, fuente, Qt::white, -1, QPixmap::BestOptim);
+
+	zbuffer = new CZBuffer(MIN_ANCHO_PANTALLA, MIN_ALTO_PANTALLA);
+	
+	pantalla = new CLienzo(MIN_ANCHO_PANTALLA, MIN_ALTO_PANTALLA, framebuffer, zbuffer, this);
+	
+	interfaz = new CInterfaz(this, pantalla);
+	interfaz->CrearInterfaz();
+
+	entidades[0] = new CCamara("Camara Principal", 500);
+	camaraactiva = (CCamara *)entidades[0];
+	interfaz->InsertarEntidad(entidades[0]->nombre, 0);
+	camaraactiva->matriztrasladado.Trasladar(0,500,0);
+	nentidades = 1;
+	
+	revolucionando = 0;
+}
+
+CVertice3d CMundo3d::CambioCoordenadasCamaraAMundo(float x, float y, float z)
+{
+	CMatriz4x4 t;
+	CVertice3d p, v;
+	
+	p.Establecer(x,y,z);
+	t.Traspuesta(camaraactiva->matrizcambiocoordenadas);
+	
+	v.VerticePorMatriz(&p, &t);
+//	v.Mostrar();
+	
+	return v;
+}
+
+void CMundo3d::RatonMovidoIzq(int x, int y)
+{
+	if (revolucionando) return;
+	
+	CMatriz4x4 m;
+	
+	m.TrasladarV(CambioCoordenadasCamaraAMundo(x,y,0));
+	
+//	m.Trasladar((float)x, (float)y, 0.0);
+	entidadactiva->matriztrasladado *= m;
+	DibujarMundo3d();
+//	printf("Raton Movido Izquierdo: %d, %d\n", x, y);
+}
+
+void CMundo3d::RatonMovidoIzqCtrl(int z)
+{
+	if (revolucionando) return;
+	
+	CMatriz4x4 m;
+	
+	m.TrasladarV(CambioCoordenadasCamaraAMundo(0,0,z));
+	//m.Trasladar(0.0, 0.0, (float)z);
+	
+	entidadactiva->matriztrasladado *= m;
+	DibujarMundo3d();
+//	printf("Raton Movido Izquierdo + Control: %d\n", z);
+}
+
+void CMundo3d::RatonMovidoDer(int x, int y)
+{
+	if (revolucionando) return;
+	
+	CMatriz4x4 mx, my;
+	
+	mx.RotarX((float)y / 100.0);
+	my.RotarZ((float)x / 100.0);
+	entidadactiva->matrizrotado *= mx;
+	entidadactiva->matrizrotado *= my;
+	DibujarMundo3d();
+//	printf("Raton Movido Derecho: %d, %d\n", x, y);
+}
+
+void CMundo3d::RatonMovidoDerCtrl(int z)
+{
+	if (revolucionando) return;
+	
+	CMatriz4x4 m;
+	
+	m.RotarY((float)z / 100.0);
+	entidadactiva->matrizrotado *= m;
+	DibujarMundo3d();
+//	printf("Raton Movido Derecho + Control: %d\n", z);
+}
+
+void CMundo3d::RatonMovidoCen(int x, int y)
+{
+	if (revolucionando) return;
+	
+	CMatriz4x4 m;
+	m.EscalarV(CambioCoordenadasCamaraAMundo(-(float)x/100.0,(float)y/100.0,0));
+//	m.Escalar((float)x, (float)y, 1.0);
+
+	entidadactiva->matrizescalado += m;
+	DibujarMundo3d();
+//	printf("Raton Movido Central: %d, %d\n", x, y);
+}
+
+void CMundo3d::RatonMovidoCenCtrl(int z)
+{
+	if (revolucionando) return;
+	
+	CMatriz4x4 m;
+
+	m.EscalarV(CambioCoordenadasCamaraAMundo(0,0,(float)z/100.0));
+//	m.Escalar(1.0, 1.0, (float)z);
+	
+	entidadactiva->matrizescalado += m;
+	DibujarMundo3d();
+//	printf("Raton Movido Central + Control: %d\n", z);
+}
+
+void CMundo3d::RatonPulsadoIzq(int x, int y)
+{
+	if (revolucionando)
+	{
+		pantalla->CapturarRaton();
+		
+		superficierevolucion.InsertarPunto2d(x, y);
+		
+		superficierevolucion.PintarRevolucion2d(framebuffer);
+		pantalla->update();
+		
+		printf("Inicio Captura de Raton\n", x, y, interfaz->EntidadSeleccionada());
+	}
+	
+	printf("Raton Pulsado Izquierdo: %d, %d - %d\n", x, y, interfaz->EntidadSeleccionada());
+}
+
+void CMundo3d::RatonPulsadoDer(int x, int y)
+{
+	if (revolucionando)
+	{
+		pantalla->SoltarRaton();
+		revolucionando = 0;
+		
+		superficierevolucion.InsertarPunto2d(x, y);
+		
+		superficierevolucion.PintarRevolucion2d(framebuffer);
+		pantalla->update();
+		framebuffer->borde = black;
+		
+		char temp[50];
+		sprintf(temp, "Objeto %d", nentidades);
+		
+		entidades[nentidades] = new CObjeto3d(temp);
+		superficierevolucion.CrearSuperficieRevolucion((CObjeto3d *)entidades[nentidades]);
+		interfaz->InsertarEntidad(temp, nentidades);
+		nentidades++;
+		
+		DibujarMundo3d();
+		
+		printf("Termino Captura de Raton\n", x, y, interfaz->EntidadSeleccionada());
+	}
+	
+	printf("Raton Pulsado Derecho: %d, %d\n", x, y);
+}
+
+void CMundo3d::IniciarSuperficieRevolucion()
+{
+	revolucionando = 1;
+	
+	superficierevolucion.Inicializar();
+	
+	framebuffer->ComenzarPintar();
+	framebuffer->CambiarColor(red);
+	framebuffer->Escribir(10,20,"MODO REVOLUCION:");
+	framebuffer->CambiarColor(black);
+	framebuffer->borde = red;
+	framebuffer->TerminarPintar();
+	pantalla->update();
+//	framebuffer->ModoXor();
+	
+	printf("IniciarSuperficieRevolucion\n");
+}
+
+void CMundo3d::RatonMovido(int x, int y)
+{
+	if (revolucionando)
+	{
+		superficierevolucion.PintarRevolucion2d(framebuffer, x, y);
+		pantalla->update();
+//		printf("Raton Movido para Revolucion: %d, %d\n", x, y);
+	}
+	else
+		printf("ERRORRaton Movido sin Revolucion: %d, %d\n", x, y);
+}
+
+void CMundo3d::CrearCamara()
+{
+	CObjeto3d *actual;
+	CVertice3d *vertices;
+	CTriangulo *triangulos;
+	CVertice3d derecha, arriba, direccionvista;
+	int nv, nt;
+	
+		actual = (CObjeto3d *) entidadactiva;
+			vertices = actual->vertices;
+			triangulos = actual->triangulos;
+			direccionvista = actual->direccionvista;
+			derecha = actual->derecha;
+			arriba = actual->arriba;
+			nv = actual->nvertices;
+			nt = actual->ntriangulos;
+	
+	printf("Vertices{\n");
+	for (int i = 0; i < nv; i++)
+ 		printf("{%.10f, %.10f, %.10f},\n", vertices[i].x, vertices[i].y, vertices[i].z);
+	printf("}\n");
+	
+	printf("Triangulos{\n");
+	for (int i = 0; i < nt; i++)
+ 		printf("{%d, %d, %d},\n", triangulos[i].a, triangulos[i].b, triangulos[i].c);
+	printf("}\n");
+	
+	printf("NormalesTriangulos{\n");
+	for (int i = 0; i < nv; i++)
+ 		printf("{%.10f, %.10f, %.10f},\n", triangulos[i].normal.x, triangulos[i].normal.y, triangulos[i].normal.z);
+	printf("}\n");
+}
+
+void CMundo3d::CambiarEntidadActiva(int i)
+{
+	entidadactiva = entidades[i];
+	interfaz->colorentidad->setBackgroundColor(entidadactiva->color);
+	interfaz->colorentidad->update();
+	interfaz->cbocultarcaras->setChecked(entidadactiva->ocultarcaras);
+	interfaz->bgmodopintar->setButton(entidadactiva->modopintar);
+	interfaz->bgmodosombreado->setButton(entidadactiva->modosombreado);
+	printf("Entidad Cambiada: %d -> %s\n", i, entidadactiva->nombre);
+}
+
+void CMundo3d::OcultarCaras(bool estado)
+{
+	entidadactiva->ocultarcaras = estado;
+	printf("Ocultar Caras: %d", estado);
+	DibujarMundo3d();
+}
+
+void CMundo3d::CambiarModoPintar(int modopintar)
+{
+	entidadactiva->modopintar = modopintar;
+	printf("Modo Pintar: %d\n", modopintar);
+	DibujarMundo3d();
+}
+
+void CMundo3d::CambiarModoSombreado(int modosombreado)
+{
+	entidadactiva->modosombreado = modosombreado;
+	printf("Modo Sombreado: %d\n", modosombreado);
+	DibujarMundo3d();
+}
+
+void CMundo3d::CambiarColor()
+{
+	QColor temp(QColorDialog::getColor(entidadactiva->color, this, "Dialogo Color"));
+	if (temp.isValid())
+	{
+		entidadactiva->color = temp;
+		interfaz->colorentidad->setBackgroundColor(temp);
+		interfaz->colorentidad->update();
+		printf("Se cambio el color\n");
+
+	}
+	printf("Se llamo al dialogo color\n");
+	DibujarMundo3d();
+}
+
+void OrdenarVerticesTriangulo(CTriangulo *triangulo, TV2D *vertices, int &sup, int &med, int &inf, int &izq, int &der)
+{
+	if (vertices[triangulo->a].y >= vertices[triangulo->b].y)
+	{
+		sup = triangulo->a;
+		med = triangulo->b;
+		
+		izq = triangulo->b;
+		der = triangulo->c;
+	}
+	else
+	{
+		sup = triangulo->b;
+		med = triangulo->a;
+		
+		izq = triangulo->c;
+		der = triangulo->a;
+	}
+	
+	if (vertices[med].y >= vertices[triangulo->c].y)
+	{
+		inf = triangulo->c;
+	}
+	else
+	{
+		if (vertices[sup].y >= vertices[triangulo->c].y)
+		{
+			inf = med;
+			med = triangulo->c;
+		}
+		else
+		{
+			inf = med;
+			med = sup;
+			sup = triangulo->c;
+		
+			izq = triangulo->a;
+			der = triangulo->b;
+		}
+	}
+}
+
+double Distancia2Puntos(int x1, int y1, double x2, double y2)
+{
+	double x = x2 - (double)x1;
+	double y = y2 - (double)y1;
+	double raiz = (x * x) + (y * y);
+	if (raiz <= 0)
+	{
+//		printf ("ERROR: RAIZ DE <=0: %d\n", raiz);
+		return 0.00000000000000000001;
+	}
+	return (sqrt(raiz));
+}
+/*
+void CMundo3d::PintarPixel(int x, int y, CTriangulo *t, TV2D *v, int modosombreado)
+{
+	float za = 1.0 / Distancia2Puntos(x, y, v[t->a].x, v[t->a].y);
+	float zb = 1.0 / Distancia2Puntos(x, y, v[t->b].x, v[t->b].y);
+	float zc = 1.0 / Distancia2Puntos(x, y, v[t->c].x, v[t->c].y);
+	float zmed = za + zb + zc;
+	za /= zmed;
+	zb /= zmed;
+	zc /= zmed;
+	
+	float z = ((za * v[t->a].z) + (zb * v[t->b].z) + (zc * v[t->c].z));
+	
+	float *zzbuffer;
+	zzbuffer = zbuffer->Z(x, y);
+	
+	if (zzbuffer == 0) return;
+	
+	if (z > *zzbuffer)
+	{
+		*zzbuffer = z;
+		framebuffer->PintarPixel(x, y);
+	}
+}
+*/
+void CMundo3d::PintarPixel(int x, int y, float z, CTriangulo *t, TV2D *v, int modosombreado)
+{
+	float *zzbuffer = zbuffer->Z(x, y);
+	
+	if (zzbuffer == 0) return;
+	
+	if (z > *zzbuffer)
+	{
+		*zzbuffer = z;
+		framebuffer->PintarPixel(x, y);
+	}
+}
+/*
+void CMundo3d::PintarPixel(int x, int y, CTriangulo *t, CVertice3d *v, int modosombreado)
+{
+	double za = 1.0 / Distancia2Puntos(x, y, v[t->a].x, v[t->a].y);
+	double zb = 1.0 / Distancia2Puntos(x, y, v[t->b].x, v[t->b].y);
+	double zc = 1.0 / Distancia2Puntos(x, y, v[t->c].x, v[t->c].y);
+	double zmed = za + zb + zc;
+	za /= zmed;
+	zb /= zmed;
+	zc /= zmed;
+	
+	double z = (za * (double)v[t->a].z) + (zb * (double)v[t->b].z) + (zc * (double)v[t->c].z);
+	
+	float *zzbuffer;
+	zzbuffer = zbuffer->Z(x, y);
+	
+	if (zzbuffer == 0) return;
+	
+	if (z > (double)*zzbuffer)
+	{
+		*zzbuffer = z;
+		framebuffer->PintarPixel(x, y);
+	}
+}
+*/
+void CMundo3d::DibujarMundo3d()
+{
+	CMatriz4x4 matrizmundo, mc, msc;
+	CObjeto3d *actual;
+	CVertice3d *vertices, *verticesmod, posicioncamara;
+	TV2D *verticesmod2d;
+	CTriangulo *triangulos;
+	CVertice3d derecha, arriba, profundidad;
+	QColor color;
+	float perspectiva;
+	int sup, inf, med, izq, der;
+	
+	zbuffer->Limpiar();
+	framebuffer->ComenzarPintar();
+	//framebuffer->Limpiar();
+	
+	posicioncamara.VerticePorMatriz(&(camaraactiva->posicion), &(camaraactiva->matriztrasladado));
+	posicioncamara *= -1;
+	mc.Identidad();
+	mc.TrasladarV(posicioncamara);
+	mc *= camaraactiva->matrizrotado;
+	mc *= camaraactiva->matrizcambiocoordenadas;
+	//mc *= camaraactiva->matrizperspectiva;
+	
+	
+	for (int i = 0; i < nentidades; i++)
+	{
+		if (entidades[i] == camaraactiva) continue;
+//		if (entidades[i] != entidadactiva) continue;
+		
+		actual = (CObjeto3d *) entidades[i];
+			vertices = actual->vertices;
+			verticesmod = actual->verticesmod;
+			verticesmod2d = actual->verticesmod2d;
+			triangulos = actual->triangulos;
+			color = actual->color;
+		
+		framebuffer->CambiarColor(color);
+		
+		matrizmundo.Identidad();
+		
+		matrizmundo *= actual->matrizescalado;
+		matrizmundo *= actual->matrizrotado;
+		matrizmundo *= actual->matriztrasladado;
+		matrizmundo *= mc;
+
+		
+		for (int v = 0; v < actual->nvertices; v++)
+		{
+			verticesmod[v].VerticePorMatriz(&(actual->vertices[v]), &matrizmundo);
+			perspectiva = verticesmod[v].z == 0.0? 10000000000000.0 : (camaraactiva->d / verticesmod[v].z);
+			verticesmod2d[v].x = int(round(verticesmod[v].x * perspectiva));
+			verticesmod2d[v].y = int(round(verticesmod[v].y * perspectiva));
+			verticesmod2d[v].z = 1.0 / (double)verticesmod[v].z;
+//			verticesmod[v].x = verticesmod[v].x * perspectiva;
+//			verticesmod[v].y = verticesmod[v].y * perspectiva;
+//			verticesmod[v].z = verticesmod2d[v].z;
+		}
+		
+		
+		for (int t = 0; t < actual->ntriangulos; t++)
+		{
+			//SI (OCULTARCARAS) CALCULAR PRODUCO ESCALAR <= 0 CONTINUE;
+			if (actual->ocultarcaras == TRUE)
+				if (triangulos[t].Oculto(verticesmod2d)) 
+//				if (triangulos[t].Oculto(verticesmod)) 
+					continue;
+			
+			//SI (FLAT) COLOR = CALCULAMOS COLOR PARA EL TRIANGULO ENTERO
+			if (actual->modosombreado == FLAT)
+			{
+				int zmedia = 700 - int(round((verticesmod[triangulos[t].a].z + verticesmod[triangulos[t].b].z + verticesmod[triangulos[t].c].z)) / 3.0);
+				framebuffer->CambiarColor(actual->color.light(zmedia));
+			}
+			
+			
+			if (actual->modopintar == PUNTOS)
+			{
+//				framebuffer->PintarPixel(verticesmod2d[triangulos[t].a].x, verticesmod2d[triangulos[t].a].y);
+//				framebuffer->PintarPixel(verticesmod2d[triangulos[t].b].x, verticesmod2d[triangulos[t].b].y);
+//				framebuffer->PintarPixel(verticesmod2d[triangulos[t].c].x, verticesmod2d[triangulos[t].c].y);
+//				PintarPixel(int x, int y, CTriangulo *t, TV2D *v, int modosombreado)
+				PintarPixel(verticesmod2d[triangulos[t].a].x, verticesmod2d[triangulos[t].a].y, verticesmod2d[triangulos[t].a].z, &(triangulos[t]), verticesmod2d,0);
+				PintarPixel(verticesmod2d[triangulos[t].b].x, verticesmod2d[triangulos[t].b].y, verticesmod2d[triangulos[t].b].z, &(triangulos[t]), verticesmod2d,0);
+				PintarPixel(verticesmod2d[triangulos[t].c].x, verticesmod2d[triangulos[t].c].y, verticesmod2d[triangulos[t].c].z, &(triangulos[t]), verticesmod2d,0);
+				continue;
+			}
+			
+			//ORDENAMOS LOS TRIANGULOS EN EJEy MAYOR > MEDIO > MENOR
+			OrdenarVerticesTriangulo(&(triangulos[t]), verticesmod2d, sup, med, inf, izq, der);
+//			OrdenarVerticesTriangulo(&(triangulos[t]), verticesmod, sup, med, inf, izq, der);
+			
+			//CALCULAMOS PENDIENTES DE TODO LO NECESARIO:
+				//VARIACION DE LAS X RESPECTO A BAJAR POR Y
+				//VARIACION DE LAS Z RESPECTO A BAJAR POR Y
+
+			int yc1, varx1, vary1, vary1_2;
+			varx1 = verticesmod2d[sup].x - verticesmod2d[med].x;
+			vary1 = verticesmod2d[sup].y - verticesmod2d[med].y;
+			yc1 = vary1;
+			if (vary1 == 0) vary1 = 1000000000;
+			vary1_2 = vary1 / 2;
+			
+			float zy1suma = (verticesmod2d[med].z - verticesmod2d[sup].z) / (float)vary1;
+			
+			int yc2, varx2, vary2, vary2_2;
+			varx2 = verticesmod2d[sup].x - verticesmod2d[inf].x;
+			vary2 = verticesmod2d[sup].y - verticesmod2d[inf].y;
+			yc2 = vary2;
+			if (vary2 == 0) vary2 = 1000000000;
+			vary2_2 = vary2 / 2;
+
+			float zy2suma = (verticesmod2d[inf].z - verticesmod2d[sup].z) / (float)vary2;
+			
+			int conty;
+			conty = verticesmod2d[sup].y;
+			
+			int x1, x2, x1ant, x2ant;
+			x1ant = verticesmod2d[med].x + (((varx1 * yc1) + vary1_2) / vary1);
+			x2ant = verticesmod2d[inf].x + (((varx2 * yc2) + vary2_2) / vary2);
+			float z1, z2;
+			z1 = verticesmod2d[sup].z;
+			z2 = verticesmod2d[sup].z;
+			while (yc2 >= 0)
+			{
+				x1 = verticesmod2d[med].x + (((varx1 * yc1) + vary1_2) / vary1);
+				x2 = verticesmod2d[inf].x + (((varx2 * yc2) + vary2_2) / vary2);
+				
+				float zxsuma = (z2 - z1) / (x2 - x1);
+				float zx = z1;
+				
+				if (actual->modopintar == LINEAS)
+				{
+					if ((yc2 == vary2) || (yc2 == 0))
+					{
+						for (int p = x1; p!= x2; p += ((x2 - x1) < 0? -1 : 1))
+						{
+//							framebuffer->PintarPixel(p, conty);
+							PintarPixel(p, conty, zx, &(triangulos[t]), verticesmod2d,0);
+							zx += zxsuma;
+						}
+//						framebuffer->PintarPixel(x2, conty);
+						PintarPixel(x2, conty, zx, &(triangulos[t]), verticesmod2d,0);
+					}
+					
+					zx = z1;
+					for (int p = x1; p != x1ant; p += ((x1ant - x1) < 0? -1 : 1) )
+					{
+						if (p == x1ant) continue;
+//						framebuffer->PintarPixel(p, conty);
+						PintarPixel(p, conty, zx, &(triangulos[t]), verticesmod2d,0);
+						zx += zxsuma;
+					}
+//					framebuffer->PintarPixel(x1, conty);
+					PintarPixel(x1ant, conty, zx, &(triangulos[t]), verticesmod2d,0);
+					x1ant = x1;
+					
+					zx = z2;
+					for (int p = x2; p != x2ant; p += ((x2ant - x2) < 0? -1 : 1) )
+					{
+						if (p == x2ant) continue;
+//						framebuffer->PintarPixel(p, conty);
+						PintarPixel(p, conty, zx, &(triangulos[t]), verticesmod2d,0);
+						zx -= zxsuma;
+					}
+//					framebuffer->PintarPixel(x2, conty);
+					PintarPixel(x2ant, conty, zx, &(triangulos[t]), verticesmod2d,0);
+					x2ant = x2;
+				}
+				else
+				{
+					for (int p = x1; p!= x2; p += ((x2 - x1) < 0? -1 : 1))
+					{
+//						framebuffer->PintarPixel(p, conty);
+						PintarPixel(p, conty, z1, &(triangulos[t]), verticesmod2d,0);
+						zx += zxsuma;
+					}
+//					framebuffer->PintarPixel(x2, conty);
+					PintarPixel(x2, conty, z1, &(triangulos[t]), verticesmod2d,0);
+					zx += zxsuma;
+				}
+				
+				if (yc1 == 0)
+				{
+					varx1 = verticesmod2d[med].x - verticesmod2d[inf].x;
+					vary1 = verticesmod2d[med].y - verticesmod2d[inf].y;
+					yc1 = vary1;
+					if (vary1 == 0) vary1 = 1000000000;
+					vary1_2 = vary1 / 2;
+					med = inf;
+				
+					zy1suma = (verticesmod2d[inf].z - verticesmod2d[med].z) / (float)vary1;
+				}
+				
+				z1 += zy1suma;
+				z2 += zy2suma;
+				
+				yc1--;
+				yc2--;
+				conty--;
+			}
+/*
+			float x1,z1, varx1, vary1, varz1, x2,z2, varx2, vary2, varz2;
+			float pend;
+			int contlinea;
+			vary1 = round(verticesmod[sup].y - verticesmod[med].y);
+			if (vary1 == 0.0) vary1 = 1.0;
+			pend = 1.0 / vary1;
+			varx1 = (verticesmod[sup].x - verticesmod[med].x) * pend;
+			varz1 = (verticesmod[sup].z - verticesmod[med].z) * pend;
+			x1 = verticesmod[sup].x;
+			z1 = verticesmod[sup].z;
+			
+			vary2 = round(verticesmod[sup].y - verticesmod[inf].y);
+			contlinea = vary2;
+			if (vary2 == 0.0) vary2 = 1.0;
+			pend = 1.0 / vary2;
+			varx2 = (verticesmod[sup].x - verticesmod[inf].x) * pend;
+			varz2 = (verticesmod[sup].z - verticesmod[inf].z) * pend;
+			x2 = verticesmod[sup].x;
+			z2 = verticesmod[sup].z;
+			
+				//SI GOURAUD O PHONG
+					//VARIACION DE LAS NORMALES A LOS VERTICES RESPECTO A BAJAR POR Y
+				
+			//YENDO DESDE ARRIBA HASTA ABAJO CALCULAMOS LOS PIXELS FRONTERA
+			repeat
+			{
+			//PINTAR PIXELES DE LA LINEA
+
+				//VARIACION DE LAS Z RESPECTO A X
+				float varx2x1 = round(varx2 - varx1);
+				int contpixel = varx2x1;
+				if (varx2x1 == 0)
+					varx2x1 = 1.0;
+				float pendx2x1 = 1.0 / (float)varx2x1;
+				float varz2z1 = (varz2 - varz1) * pendx2x1;
+				//SI GOURAUD O PHONG
+					//VARIACION DE LAS NORMALES A LOS VERTICES RESPECTO A X
+
+				repeat
+				{
+					
+					varz1 += varz2z1;
+					contpixel--;
+				}while (contpixel >= 0)
+
+				//SWITCH (MODOPINTAR) PUNTOS, LINEAS, RELLENO;
+					//PARA CADA PIXEL A PINTAR SWITCH (MODOSOMBREADO) [SIN, FLAT], GOURAUD, PHONG
+				x1 += varx1;
+				z1 += varz1;
+				
+				x2 += varx2;
+				z2 *= varz2;
+				contlinea--;
+			} while (contlinea >= 0);
+*/
+/*			
+			framebuffer->PintarLinea(verticesmod2d[triangulos[t].a].x, verticesmod2d[triangulos[t].a].y, verticesmod2d[triangulos[t].b].x, verticesmod2d[triangulos[t].b].y);
+			framebuffer->PintarLinea(verticesmod2d[triangulos[t].b].x, verticesmod2d[triangulos[t].b].y, verticesmod2d[triangulos[t].c].x, verticesmod2d[triangulos[t].c].y);
+			framebuffer->PintarLinea(verticesmod2d[triangulos[t].c].x, verticesmod2d[triangulos[t].c].y, verticesmod2d[triangulos[t].a].x, verticesmod2d[triangulos[t].a].y);
+		
+			framebuffer->PintarLinea(verticesmod[triangulos[t].a].x, verticesmod[triangulos[t].a].y, verticesmod[triangulos[t].b].x, verticesmod[triangulos[t].b].y);
+			framebuffer->PintarLinea(verticesmod[triangulos[t].b].x, verticesmod[triangulos[t].b].y, verticesmod[triangulos[t].c].x, verticesmod[triangulos[t].c].y);
+			framebuffer->PintarLinea(verticesmod[triangulos[t].c].x, verticesmod[triangulos[t].c].y, verticesmod[triangulos[t].a].x, verticesmod[triangulos[t].a].y);
+			
+			framebuffer->PintarLinea(vertices[triangulos[t].a].x, vertices[triangulos[t].a].y, vertices[triangulos[t].b].x, vertices[triangulos[t].b].y);
+			framebuffer->PintarLinea(vertices[triangulos[t].b].x, vertices[triangulos[t].b].y, vertices[triangulos[t].c].x, vertices[triangulos[t].c].y);
+			framebuffer->PintarLinea(vertices[triangulos[t].c].x, vertices[triangulos[t].c].y, vertices[triangulos[t].a].x, vertices[triangulos[t].a].y);
+		
+			framebuffer->PintarPixel(vertices[triangulos[t].a].x, vertices[triangulos[t].a].y);
+			framebuffer->PintarPixel(vertices[triangulos[t].b].x, vertices[triangulos[t].b].y);
+			framebuffer->PintarPixel(vertices[triangulos[t].c].x, vertices[triangulos[t].c].y);
+*/		}
+	}
+
+	framebuffer->borde = black;
+	//framebuffer->PintarBorde();
+	framebuffer->TerminarPintar();
+	pantalla->update();
+//	printf("MUNDO PINTADO\n");
+}
+

@@ -1,0 +1,3 @@
+#!/bin/bash
+
+kate *.cpp *.h Makefile proyecto.kate

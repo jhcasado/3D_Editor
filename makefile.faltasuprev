@@ -1,0 +1,59 @@
+INCL= -I$(QTDIR)/include
+CFLAGS= -pipe -O2 -fno-strength-reduce
+LFLAGS= -L$(QTDIR)/lib -L/usr/X11R6/lib
+LIBS= -lqt -lX11 -lXext
+CC=g++
+
+dgc: dgc.o cmundo3d.o moc_cmundo3d.o clienzo.o moc_clienzo.o cinterfaz.o moc_cinterfaz.o cframebuffer.o centidad3d.o ccamara.o cobjeto3d.o cluz.o czbuffer.o cpuntofijo.o  cvertice3d.o ctriangulo.o cmatriz4x4.o
+	$(CC) $(LFLAGS) -o dgc dgc.o cmundo3d.o moc_cmundo3d.o clienzo.o moc_clienzo.o cinterfaz.o moc_cinterfaz.o cframebuffer.o centidad3d.o ccamara.o cobjeto3d.o cluz.o cvertice3d.o $(LIBS)
+
+dgc.o: dgc.cpp cmundo3d.h
+
+cmundo3d.o: cmundo3d.cpp cmundo3d.h clienzo.h cinterfaz.h centidad3d.h cframebuffer.h czbuffer.h ccamara.h cobjeto3d.h cluz.h cvertice3d.h
+
+moc_cmundo3d.cpp: cmundo3d.h
+	$(QTDIR)/bin/moc cmundo3d.h -o moc_cmundo3d.cpp
+
+clienzo.o: clienzo.cpp clienzo.h cframebuffer.h
+
+moc_clienzo.cpp: clienzo.h
+	$(QTDIR)/bin/moc clienzo.h -o moc_clienzo.cpp
+
+cinterfaz.o: cinterfaz.cpp cinterfaz.h clienzo.h
+
+moc_cinterfaz.cpp: cinterfaz.h
+	$(QTDIR)/bin/moc cinterfaz.h -o moc_cinterfaz.cpp
+
+centidad3d.o: centidad3d.cpp centidad3d.h cvertice3d.h cmatriz4x4.h
+
+ccamara.o: ccamara.cpp ccamara.h centidad3d.h cmatriz4x4.h
+
+cobjeto3d.o: cobjeto3d.cpp cobjeto3d.h centidad3d.h cvertice3d.h ctriangulo.h
+
+cluz.o: cluz.cpp cluz.h centidad3d.h
+
+cframebuffer.o: cframebuffer.cpp cframebuffer.h
+
+czbuffer.o: czbuffer.cpp czbuffer.h cpuntofijo.h
+
+cpuntofijo.o: cpuntofijo.cpp cpuntofijo.h
+
+cvertice3d.o: cvertice3d.cpp cvertice3d.h cpuntofijo.h cmatriz4x4.h
+
+ctriangulo.o: ctriangulo.cpp ctriangulo.h cvertice3d.h
+
+cmatriz4x4.o: cmatriz4x4.cpp cmatriz4x4.h mate.h cvertice3d.h
+
+static:
+	$(CC) $(LFLAGS) -static -o dgc dgc.o cmundo3d.o moc_cmundo3d.o clienzo.o moc_clienzo.o cframebuffer.o $(LIBS)
+
+clean:
+	rm -f dgc
+	rm -f *.o
+	rm -f *~
+	rm -f moc*
+
+.SUFFIXES: .cpp
+
+.cpp.o:
+	$(CC) -c $(CFLAGS) $(INCL) -o $@ $<
